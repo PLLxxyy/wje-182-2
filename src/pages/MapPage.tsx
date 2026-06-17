@@ -1,8 +1,11 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChargingStation } from '../types';
+import { ChargingStation, Reservation } from '../types';
 import { mockStations, getCellType } from '../utils/data';
-import { getFavorites, toggleFavorite, isFavorite, getCurrentSession } from '../utils/storage';
+import { 
+  getFavorites, toggleFavorite, isFavorite, getCurrentSession,
+  getActiveReservations, refreshReservationStatuses, hasReservationAtStation
+} from '../utils/storage';
 import StationCard from '../components/StationCard';
 
 type FilterType = 'all' | 'free' | 'fast' | 'slow';
@@ -15,7 +18,19 @@ export default function MapPage() {
   const [sort, setSort] = useState<SortType>('distance');
   const [searchText, setSearchText] = useState('');
   const [favorites, setFavorites] = useState<string[]>(getFavorites());
+  const [activeReservations, setActiveReservations] = useState<Reservation[]>([]);
   const currentSession = getCurrentSession();
+
+  const refreshReservations = useCallback(() => {
+    refreshReservationStatuses();
+    setActiveReservations(getActiveReservations());
+  }, []);
+
+  useEffect(() => {
+    refreshReservations();
+    const timer = setInterval(refreshReservations, 30000);
+    return () => clearInterval(timer);
+  }, [refreshReservations]);
 
   const handleToggleFavorite = useCallback((stationId: string) => {
     const newFavs = toggleFavorite(stationId);
@@ -25,7 +40,6 @@ export default function MapPage() {
   const filteredStations = useMemo(() => {
     let stations = [...mockStations];
 
-    // Search filter
     if (searchText.trim()) {
       const q = searchText.trim().toLowerCase();
       stations = stations.filter(
@@ -33,7 +47,6 @@ export default function MapPage() {
       );
     }
 
-    // Type filter
     if (filter === 'free') {
       stations = stations.filter(s => s.status === 'free');
     } else if (filter === 'fast') {
@@ -42,13 +55,11 @@ export default function MapPage() {
       stations = stations.filter(s => s.chargerType === 'slow' || s.chargerType === 'both');
     }
 
-    // Sort
     stations.sort((a, b) => {
       if (sort === 'price') return a.pricePerKwh - b.pricePerKwh;
       return a.distance - b.distance;
     });
 
-    // Favorites pinned to top
     const favStations = stations.filter(s => favorites.includes(s.id));
     const otherStations = stations.filter(s => !favorites.includes(s.id));
     return [...favStations, ...otherStations];
@@ -67,6 +78,15 @@ export default function MapPage() {
   const handleStartCharge = (station: ChargingStation) => {
     setSelectedStation(null);
     navigate('/charging', { state: { station } });
+  };
+
+  const formatReservationTime = (ts: number) => {
+    const d = new Date(ts);
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const h = d.getHours().toString().padStart(2, '0');
+    const m = d.getMinutes().toString().padStart(2, '0');
+    return `${month}/${day} ${h}:${m}`;
   };
 
   return (
@@ -112,24 +132,24 @@ export default function MapPage() {
           ))}
         </div>
 
-        {/* Station markers */}
         {filteredStations.map(station => {
           const leftPct = ((station.x + 0.5) / 20) * 100;
           const topPct = ((station.y + 0.5) / 15) * 100;
+          const stationHasReservation = hasReservationAtStation(station.id);
           return (
             <div
               key={station.id}
-              className={`station-marker ${station.status} ${favorites.includes(station.id) ? 'favorited' : ''}`}
+              className={`station-marker ${station.status} ${favorites.includes(station.id) ? 'favorited' : ''} ${stationHasReservation ? 'has-reservation' : ''}`}
               style={{ left: `${leftPct}%`, top: `${topPct}%`, transform: 'translate(-50%, -50%)' }}
               onClick={() => setSelectedStation(station)}
               title={station.name}
             >
               ⚡
+              {stationHasReservation && <div className="marker-reservation-dot" />}
             </div>
           );
         })}
 
-        {/* Map legend */}
         <div className="map-legend">
           <div className="legend-title">图例</div>
           <div className="legend-row">
@@ -144,9 +164,29 @@ export default function MapPage() {
             <div className="legend-dot-status fault" />
             <span>故障</span>
           </div>
+          <div className="legend-row">
+            <div className="legend-dot-reservation" />
+            <span>已预约</span>
+          </div>
         </div>
 
-        {/* Current charging indicator */}
+        {activeReservations.length > 0 && (
+          <div className="reservation-banner" onClick={() => navigate('/profile')}>
+            <div className="reservation-banner-icon">📅</div>
+            <div className="reservation-banner-info">
+              <div className="reservation-banner-title">您有 {activeReservations.length} 个预约</div>
+              {activeReservations.slice(0, 2).map(r => (
+                <div key={r.id} className="reservation-banner-item">
+                  {r.stationName} · {formatReservationTime(r.startTime)}-{formatReservationTime(r.endTime)}
+                </div>
+              ))}
+              {activeReservations.length > 2 && (
+                <div className="reservation-banner-more">点击查看全部 →</div>
+              )}
+            </div>
+          </div>
+        )}
+
         {currentSession && currentSession.status === 'charging' && (
           <div
             className="current-charging-indicator"
@@ -157,7 +197,6 @@ export default function MapPage() {
           </div>
         )}
 
-        {/* Station list panel */}
         <div className="station-list-panel">
           <div className="list-handle" />
           <div className="search-bar" style={{ margin: '0 0 8px', boxShadow: 'none', padding: '8px 12px' }}>
@@ -173,34 +212,39 @@ export default function MapPage() {
             附近充电站 ({filteredStations.length})
             {sort === 'price' ? ' · 按价格排序' : ' · 按距离排序'}
           </div>
-          {filteredStations.map(station => (
-            <div
-              key={station.id}
-              className="station-list-item"
-              onClick={() => setSelectedStation(station)}
-            >
-              <div className={`station-list-icon ${station.status}`}>
-                {favorites.includes(station.id) ? '⭐' : '⚡'}
-              </div>
-              <div className="station-list-info">
-                <div className="station-list-name">{station.name}</div>
-                <div className="station-list-detail">
-                  {station.chargerType === 'fast' ? '快充' : station.chargerType === 'slow' ? '慢充' : '快充/慢充'}
-                  {' · '}空闲 {station.freeGuns}/{station.totalGuns}
+          {filteredStations.map(station => {
+            const stationHasReservation = hasReservationAtStation(station.id);
+            return (
+              <div
+                key={station.id}
+                className="station-list-item"
+                onClick={() => setSelectedStation(station)}
+              >
+                <div className={`station-list-icon ${station.status}`}>
+                  {favorites.includes(station.id) ? '⭐' : stationHasReservation ? '📅' : '⚡'}
+                </div>
+                <div className="station-list-info">
+                  <div className="station-list-name">
+                    {station.name}
+                    {stationHasReservation && <span className="list-tag reservation-tag">已预约</span>}
+                  </div>
+                  <div className="station-list-detail">
+                    {station.chargerType === 'fast' ? '快充' : station.chargerType === 'slow' ? '慢充' : '快充/慢充'}
+                    {' · '}空闲 {station.freeGuns}/{station.totalGuns}
+                  </div>
+                </div>
+                <div className="station-list-right">
+                  <div className="station-list-price">
+                    ¥{station.pricePerKwh.toFixed(2)} <span>/度</span>
+                  </div>
+                  <div className="station-list-distance">{station.distance}km</div>
                 </div>
               </div>
-              <div className="station-list-right">
-                <div className="station-list-price">
-                  ¥{station.pricePerKwh.toFixed(2)} <span>/度</span>
-                </div>
-                <div className="station-list-distance">{station.distance}km</div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      {/* Station card modal */}
       {selectedStation && (
         <div className="modal-overlay" onClick={() => setSelectedStation(null)}>
           <div onClick={e => e.stopPropagation()}>
@@ -211,6 +255,8 @@ export default function MapPage() {
               onStartCharge={() => handleStartCharge(selectedStation)}
               onClose={() => setSelectedStation(null)}
               hasActiveSession={currentSession?.status === 'charging'}
+              hasReservation={hasReservationAtStation(selectedStation.id)}
+              onReservationSuccess={refreshReservations}
             />
           </div>
         </div>

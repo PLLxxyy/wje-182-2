@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChargingSession, ChargingStation } from '../types';
-import { getCurrentSession, saveCurrentSession, addHistory } from '../utils/storage';
+import { ChargingSession, ChargingStation, Reservation } from '../types';
+import { getCurrentSession, saveCurrentSession, addHistory, getActiveReservations, updateReservationStatus } from '../utils/storage';
 import { mockStations } from '../utils/data';
 
 const BATTERY_CAPACITY = 60; // kWh - typical EV battery
@@ -48,12 +48,29 @@ export default function ChargingMonitorPage() {
   const [showSettlement, setShowSettlement] = useState(false);
   const intervalRef = useRef<number | null>(null);
   const [station, setStation] = useState<ChargingStation | null>(state?.station || null);
+  const [matchedReservation, setMatchedReservation] = useState<Reservation | null>(null);
 
   // Find station data if we resumed a session
   useEffect(() => {
     if (session && !station) {
       const found = mockStations.find(s => s.id === session.stationId);
       if (found) setStation(found);
+    }
+  }, [session, station]);
+
+  // Check for matching reservation (priority charging)
+  useEffect(() => {
+    if (!session || !station) return;
+    const now = Date.now();
+    const activeReservations = getActiveReservations();
+    const match = activeReservations.find(r =>
+      r.stationId === station.id &&
+      r.startTime <= now &&
+      r.endTime >= now
+    );
+    if (match) {
+      updateReservationStatus(match.id, 'completed');
+      setMatchedReservation(match);
     }
   }, [session, station]);
 
@@ -171,6 +188,24 @@ export default function ChargingMonitorPage() {
           {isCharging && <span className="pulse-dot" />}
           {isCharging ? '充电中...' : session.status === 'completed' ? '充电完成' : '充电已停止'}
         </div>
+
+        {matchedReservation && (
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(114,46,209,0.25), rgba(146,84,222,0.2))',
+            border: '1px solid rgba(114,46,209,0.4)',
+            borderRadius: '12px',
+            padding: '10px 16px',
+            fontSize: '13px',
+            color: '#d3adf7',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontWeight: '500',
+          }}>
+            <span style={{ fontSize: '16px' }}>📅</span>
+            <span>预约优先充电 · {matchedReservation.gunType === 'fast' ? '快充' : '慢充'} · {matchedReservation.gunPower}kW</span>
+          </div>
+        )}
 
         {/* Battery ring */}
         <div className="battery-ring-container">

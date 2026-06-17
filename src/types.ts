@@ -37,4 +37,18 @@ export interface ChargingSession {
   status: 'charging' | 'completed' | 'stopped';
 }
 
+export interface Reservation {
+  id: string;
+  stationId: string;
+  stationName: string;
+  stationAddress: string;
+  gunId: string;
+  gunType: 'fast' | 'slow';
+  gunPower: number;
+  startTime: number; // timestamp - reservation window start
+  endTime: number; // timestamp - reservation window end
+  createdAt: number; // timestamp when reservation was made
+  status: 'pending' | 'active' | 'completed' | 'cancelled' | 'expired';
+}
+
 export type GridCellType = 'empty' | 'road' | 'block' | 'park' | 'water';

@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { ChargingStation } from '../types';
+import ReservationModal from './ReservationModal';
 
 interface Props {
   station: ChargingStation;
@@ -7,11 +9,35 @@ interface Props {
   onStartCharge: () => void;
   onClose: () => void;
   hasActiveSession: boolean;
+  hasReservation?: boolean;
+  onReservationSuccess?: () => void;
 }
 
-export default function StationCard({ station, isFav, onToggleFavorite, onStartCharge, onClose, hasActiveSession }: Props) {
+export default function StationCard({ 
+  station, isFav, onToggleFavorite, onStartCharge, 
+  onClose, hasActiveSession, hasReservation, onReservationSuccess 
+}: Props) {
+  const [showReservation, setShowReservation] = useState(false);
   const canCharge = station.freeGuns > 0 && !hasActiveSession;
+  const canReserve = !hasActiveSession;
   const chargeTypeLabel = station.chargerType === 'fast' ? '快充' : station.chargerType === 'slow' ? '慢充' : '快充/慢充';
+
+  const handleReservationSuccess = () => {
+    setShowReservation(false);
+    if (onReservationSuccess) {
+      onReservationSuccess();
+    }
+  };
+
+  if (showReservation) {
+    return (
+      <ReservationModal
+        station={station}
+        onClose={() => setShowReservation(false)}
+        onSuccess={handleReservationSuccess}
+      />
+    );
+  }
 
   return (
     <div className="station-card">
@@ -19,6 +45,7 @@ export default function StationCard({ station, isFav, onToggleFavorite, onStartC
         <div>
           <div className="station-name">
             {station.name}
+            {hasReservation && <span className="badge badge-reservation">已预约</span>}
           </div>
           <div className="station-address">{station.address}</div>
         </div>
@@ -60,17 +87,26 @@ export default function StationCard({ station, isFav, onToggleFavorite, onStartC
         </div>
       </div>
 
-      <button
-        className="start-charge-btn"
-        onClick={onStartCharge}
-        disabled={!canCharge}
-      >
-        {!canCharge && hasActiveSession
-          ? '已有充电进行中'
-          : station.freeGuns === 0
-          ? '暂无空闲充电枪'
-          : '开始充电'}
-      </button>
+      <div className="card-action-buttons">
+        <button
+          className="reserve-btn"
+          onClick={() => setShowReservation(true)}
+          disabled={!canReserve}
+        >
+          {!canReserve && hasActiveSession ? '充电中无法预约' : '预约充电'}
+        </button>
+        <button
+          className="start-charge-btn"
+          onClick={onStartCharge}
+          disabled={!canCharge}
+        >
+          {!canCharge && hasActiveSession
+            ? '已有充电进行中'
+            : station.freeGuns === 0
+            ? '暂无空闲充电枪'
+            : '开始充电'}
+        </button>
+      </div>
       <button className="close-card-btn" onClick={onClose}>
         关闭
       </button>
